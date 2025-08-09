@@ -1,23 +1,16 @@
 import functools
 from lib.logging import logger
 
-# def _getDependency(self, name):
-#     if not self._dependencies[name]:
-#         return []
-#     return list( [_name] + _getDependency(self, _name) for _name in self._dependencies[name] )[0]
-
-# def getDependency(self, name):
-#     return set(_getDependency(self, name))
-
 def updateDependencies(self, name):
     if not self._current_stack:
         return
-    stack_length = len(self._current_stack)
-    while stack_length:
-        parent = self._current_stack[stack_length-1]
+    stack_iter = len(self._current_stack)
+    while stack_iter:
+        parent = self._current_stack[stack_iter-1]
         self._dependencies[parent].add(name)
+        self._dependencies[parent].update(self._dependencies.get(name, {}))
         self._dependents[name].add(parent)
-        stack_length-=1
+        stack_iter-=1
 
 class GraphNode:
     """Graph Node"""
@@ -35,13 +28,8 @@ class GraphNode:
         @functools.wraps(self.func)
         def caller(*args, **kwargs):
 
-            # update the dependency as soon as we enter the call stack
-            # TODO noticed a bug when nested deps are not captured incase one of the nested dep is already cached.
-            # eg:   if F > E > D > B > A and E is already in cache then when calling F()
-            #       the call only marks F: {E}
             updateDependencies(instance, self.name)
 
-            # If cached, return value
             logger.debug(f'[GraphNode] looking for {self.func} in cache')
             if self.name in instance._cache:
                 logger.debug(f'[GraphNode] found {self.func} in cache')
@@ -54,7 +42,6 @@ class GraphNode:
             instance._current_stack.pop()
             logger.debug(f'[GraphNode] {"...."*len(instance._current_stack)}exitied stack for {self.func} | stack: {instance._current_stack}')
 
-            # Cache result
             logger.debug(f'[GraphNode] adding {self.func}: {result} in cache')
             instance._cache[self.name] = result
             return result
