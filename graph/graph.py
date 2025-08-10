@@ -1,16 +1,7 @@
-import functools
+import ast
+import inspect
+from collections import deque
 from lib.logging import logger
-
-def updateDependencies(self, name):
-    if not self._current_stack:
-        return
-    stack_iter = len(self._current_stack)
-    while stack_iter:
-        parent = self._current_stack[stack_iter-1]
-        self._dependencies[parent].add(name)
-        self._dependencies[parent].update(self._dependencies.get(name, {}))
-        self._dependents[name].add(parent)
-        stack_iter-=1
 
 class GraphNode:
     """Graph Node"""
@@ -25,22 +16,14 @@ class GraphNode:
             return self
 
         # Return a callable wrapper so g.A() still works
-        @functools.wraps(self.func)
         def caller(*args, **kwargs):
-
-            updateDependencies(instance, self.name)
 
             logger.debug(f'[GraphNode] looking for {self.func} in cache')
             if self.name in instance._cache:
                 logger.debug(f'[GraphNode] found {self.func} in cache')
                 return instance._cache[self.name]
 
-            # Track call stack for dependency discovery
-            instance._current_stack.append(self.name)
-            logger.debug(f'[GraphNode] {"...."*len(instance._current_stack)}entered stack for {self.func} | stack: {instance._current_stack}')
             result = self.func(instance, *args, **kwargs)
-            instance._current_stack.pop()
-            logger.debug(f'[GraphNode] {"...."*len(instance._current_stack)}exitied stack for {self.func} | stack: {instance._current_stack}')
 
             logger.debug(f'[GraphNode] adding {self.func}: {result} in cache')
             instance._cache[self.name] = result
@@ -70,16 +53,8 @@ class Graph:
     def __init__(self):
         logger.debug('[Graph] __init__ start')
         self._cache = {}
-        self._dependencies = {}   # node -> set of dependencies
-        self._dependents = {}     # node -> set of dependents
-        self._current_stack = []  # for dependency discovery
-
-        # Scan class attributes without triggering descriptors
-        for attr, value in vars(self.__class__).items():
-            if isinstance(value, GraphNode):
-                self._dependencies[attr] = set()
-                self._dependents[attr] = set()
-
+        self._dependencies = self.getDependencyGraph()          # node -> set of dependencies
+        self._dependents = self.getReverseDependencyGraph()     # node -> set of dependents
         logger.debug('[Graph] __init__ end')
 
     def invalidate(self, node):
@@ -88,6 +63,56 @@ class Graph:
             del self._cache[node]
         for dep in self._dependents.get(node, []):
             self.invalidate(dep)
+
+    @staticmethod
+    def _expandDependencyGraph(graph):
+        graph = {k: set(v) for k, v in graph.items()}        
+        nodesToExpand = deque(graph.keys())
+
+        while nodesToExpand:
+            node = nodesToExpand.popleft()
+            current_deps = graph[node].copy()
+
+            for dep in current_deps:
+                new_items = graph[dep].difference(current_deps)
+                if not new_items:
+                    continue
+                graph[node].update(new_items)
+                nodesToExpand.append(node)
+        
+        return graph
+
+    @staticmethod
+    def _getDependencyGraphFromTree(tree):
+        dependency_graph = {}
+        for node in ast.walk(tree):
+            if not hasattr(node, 'decorator_list'):
+                continue
+            if not any(d.func.id == graph_node.__name__ for d in node.decorator_list):
+                continue
+            dependency_graph[node.name] = set()
+            for inner_node in node.body:
+                for _n in ast.walk(inner_node):
+                    if isinstance(_n, ast.Attribute) and _n.value.id=='self':
+                        dependency_graph[node.name].add(_n.attr)
+        return dependency_graph
+
+    @classmethod
+    def getDependencyGraph(cls):
+        src = inspect.getsource(cls)
+        tree = ast.parse(src)
+        graph = cls._getDependencyGraphFromTree(tree)
+        return cls._expandDependencyGraph(graph)
+    
+    @classmethod
+    def getReverseDependencyGraph(cls):
+        reverseDependency = {}
+        for fn_name, dependencies in cls.getDependencyGraph().items():
+            for dependancy in dependencies:
+                if dependancy not in reverseDependency:
+                    reverseDependency[dependancy] = set()
+                reverseDependency[dependancy].add(fn_name)
+        return reverseDependency
 
 
 class MyGraph(Graph):
@@ -127,4 +152,4 @@ class MyGraph(Graph):
         if self.A() > 5:
             return self.E()*1.5
         else:
-            return 14
+            return self.D(5)
