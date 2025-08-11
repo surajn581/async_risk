@@ -1,7 +1,7 @@
 import ast
 import inspect
 from collections import deque
-from lib.logging import logger
+from lib.logging import logger, SuppressLogging, DEBUG
 
 class GraphNode:
     """Graph Node"""
@@ -117,3 +117,9 @@ class Graph:
                     reverseDependency[dependancy] = set()
                 reverseDependency[dependancy].add(fn_name)
         return reverseDependency
+    
+    def show(self):
+        from visalize import visualizeGraphWithLevels
+        with SuppressLogging(DEBUG):
+            visualizeGraphWithLevels(self._dependencies)
+
