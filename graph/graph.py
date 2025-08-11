@@ -119,7 +119,7 @@ class Graph:
         return reverseDependency
     
     def show(self):
-        from visalize import visualizeGraphWithLevels
+        from visualize import visualizeGraphWithLevels
         with SuppressLogging(DEBUG):
             visualizeGraphWithLevels(self._dependencies)
 
