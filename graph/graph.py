@@ -9,7 +9,6 @@ class GraphNode:
         self.func = func
         self.name = func.__name__
         self.settable = settable
-        self._is_graph_node = True
 
     def __get__(self, instance, owner):
         if instance is None:
@@ -54,7 +53,7 @@ class Graph:
         logger.debug('[Graph] __init__ start')
         self._cache = {}
         self._dependencies = self.getDependencyGraph()          # node -> set of dependencies
-        self._dependents = self.getReverseDependencyGraph()     # node -> set of dependents
+        self._dependents = self.getReverseDependencyGraph(self._dependencies)     # node -> set of dependents
         logger.debug('[Graph] __init__ end')
 
     def invalidate(self, node):
@@ -66,7 +65,12 @@ class Graph:
 
     @staticmethod
     def _expandDependencyGraph(graph):
-        graph = {k: set(v) for k, v in graph.items()}        
+        # we do set(v).intersection(graph) since some times v can have instance attrs that are not graph nodes
+        # eg: graph_node(D): self.constant * graph_node(A)
+        # in this case v for D will have {A, constant} and, since we only want to track graph_nodes and the
+        # ast walk only puts graph_nodes in the graph's key, performing v.interset(graph.keys) does the trick.
+        # TODO find a way to handle it while doing the ast walk
+        graph = {k: set(v).intersection(graph) for k, v in graph.items()}        
         nodesToExpand = deque(graph.keys())
 
         while nodesToExpand:
@@ -104,10 +108,10 @@ class Graph:
         graph = cls._getDependencyGraphFromTree(tree)
         return cls._expandDependencyGraph(graph)
     
-    @classmethod
-    def getReverseDependencyGraph(cls):
+    @staticmethod
+    def getReverseDependencyGraph(graph):
         reverseDependency = {}
-        for fn_name, dependencies in cls.getDependencyGraph().items():
+        for fn_name, dependencies in graph.items():
             for dependancy in dependencies:
                 if dependancy not in reverseDependency:
                     reverseDependency[dependancy] = set()
