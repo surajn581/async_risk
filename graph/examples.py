@@ -5,6 +5,7 @@ class MyGraph(Graph):
     def __init__(self):
         logger.debug('[MyGraph] __init__ start')
         super().__init__()
+        self.constant = 4
         logger.debug('[MyGraph] __init__ end')
 
     @graph_node(settable=True)
@@ -38,4 +39,4 @@ class MyGraph(Graph):
         if self.A() > 5:
             return self.E()*1.5
         else:
-            return self.D(5)
+            return self.D(self.constant)
