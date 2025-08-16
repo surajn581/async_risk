@@ -10,12 +10,14 @@ market_move_stream = Subject()
 prediction_stream = Subject()
 
 def create_circuit(price_stream, move_stream, sch):
+    s_price_prev = []
     s_price = []
     s_move = []
 
     def on_price(price):
         logger.info("Price ticked: {}".format(price))
         s_price.append(price)
+        s_price_prev.append(price)
         if s_move:
             logger.info('Re-ticking market move {}'.format(s_move[-1]))
             move_stream.on_next(s_move[-1])
@@ -23,13 +25,15 @@ def create_circuit(price_stream, move_stream, sch):
 
     def on_move(move):
         logger.info("Market move ticked: {}".format(move))
-        if s_price:
-            prediction = [p * move for p in s_price]
+        s_move.append(move)
+        if (s_price or s_price_prev):
+            if not s_price:
+                logger.info('Processing previously ticked prices with new market move')
+            prediction = [p * move for p in (s_price or s_price_prev)]
             prediction_stream.on_next(prediction)
             s_price.clear()
         else:
-            logger.info('No prices to process, updating market move: {} in state'.format(move))
-            s_move.append(move)
+            logger.info('No new prices to process')
 
     price_stream.subscribe(on_price, scheduler=sch)
     move_stream.subscribe(on_move, scheduler=sch)
