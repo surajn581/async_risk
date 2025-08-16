@@ -1,0 +1,36 @@
+digraph {
+	rankdir=LR
+	{
+		rank=same
+		A [fillcolor=lightblue shape=circle style=filled]
+	}
+	{
+		rank=same
+		B [fillcolor=lightgreen shape=circle style=filled]
+	}
+	{
+		rank=same
+		D [fillcolor=pink shape=circle style=filled]
+	}
+	{
+		rank=same
+		E [fillcolor=yellow shape=circle style=filled]
+	}
+	{
+		rank=same
+		C [fillcolor=green shape=circle style=filled]
+		F [fillcolor=green shape=circle style=filled]
+	}
+	A -> B
+	A -> C
+	B -> C
+	A -> D
+	B -> D
+	A -> E
+	D -> E
+	B -> E
+	B -> F
+	A -> F
+	D -> F
+	E -> F
+}
