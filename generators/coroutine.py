@@ -10,7 +10,6 @@ class Coroutine:
         self.args = args
         self.kwargs = kwargs
         self.task = self.func(*self.args, **self.kwargs)
-        self.__iter__ = self.task.__iter__
 
     def send(self, input):
         '''
@@ -20,6 +19,9 @@ class Coroutine:
         next(self.task)
         res = self.task.send(input)        
         return res
+    
+    def __iter__(self):
+        return iter(self.task)
 
     def __next__(self):
         return next(self.task)
