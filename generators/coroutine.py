@@ -6,10 +6,19 @@ class Coroutine:
     and solve the double send problem with generators that accept input
     '''
     def __init__(self, task, *args, **kwargs):
-        self.func = task
-        self.args = args
-        self.kwargs = kwargs
-        self.task = self.func(*self.args, **self.kwargs)
+        self.task = task(*args, **kwargs)
+        self._repr = self._makeRepr(task, args, kwargs)
+
+    def _makeRepr(self, task, args, kwargs):
+        reprStr = f'{self.__class__.__name__}({task.__name__}'
+        argsStr = ",".join([str(arg) for arg in args])
+        kwargsStr = ",".join( [ f'{key}={value}' for key, value in kwargs.items() ] )
+
+        for _str in [argsStr, kwargsStr]:
+            reprStr+=f', {_str}' if _str else ''
+
+        reprStr += ')'
+        return reprStr
 
     def send(self, input):
         '''
@@ -27,7 +36,7 @@ class Coroutine:
         return next(self.task)
     
     def __repr__(self):
-        return f'{self.__class__.__name__}({self.func.__name__}, *{self.args}, **{self.kwargs})'
+        return self._repr
     
 def coroutine(func):
     '''
