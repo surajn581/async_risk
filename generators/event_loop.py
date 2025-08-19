@@ -10,5 +10,6 @@ class EventLoop:
                 try:
                     self.tasks[task] = next(task)
                 except StopIteration as si:
-                    self.tasks[task] = si.args[0] if len(si.args) else None
+                    if len(si.args):
+                        self.tasks[task] = si.args[0]
                     self.pending.remove(task)
