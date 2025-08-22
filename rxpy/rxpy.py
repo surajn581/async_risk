@@ -4,6 +4,7 @@ import asyncio
 from logging_utils import logger
 from rx.subject import Subject
 from rx.scheduler.eventloop import AsyncIOScheduler
+from process_utils import execute
 
 price_stream = Subject()
 market_move_stream = Subject()
@@ -41,10 +42,10 @@ def create_circuit(price_stream, move_stream, sch):
     move_stream.subscribe(on_move, scheduler=sch)
 
 
-def downstream(prediction_stream, sch):
-    def on_predict(predicts):
-        logger.info('Predicts: {}'.format(predicts))
-    prediction_stream.subscribe(on_predict, scheduler=sch)
+def post_process(predicts):
+    logger.info('[post_process] received predicts: {}'.format(predicts))
+    logger.info('[post_process] scaling by 2')
+    return [p*2 for p in predicts]
 
 
 async def watch_directory(dirPath, stream, parse_fn, poll_interval=0.1):
@@ -89,7 +90,11 @@ async def main():
     scheduler = AsyncIOScheduler(loop)
 
     create_circuit(price_stream, market_move_stream, scheduler)
-    downstream(prediction_stream, scheduler)
+
+    post_process_out = execute()('subprocess', post_process,
+                                 prediction_stream, scheduler)
+    post_process_out.subscribe(lambda out: logger.info(
+        'Downstream received: {}'.format(out)))
 
     def dirPath(name): return os.path.join(
         'C:/Users/suraj/projects/async_risk/rxpy/', name)
@@ -103,3 +108,6 @@ async def main():
     )
 
     await asyncio.gather(price_task, move_task)
+
+if __name__ == "__main__":
+    asyncio.run(main())
