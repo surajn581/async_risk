@@ -9,6 +9,7 @@ price_stream = Subject()
 market_move_stream = Subject()
 prediction_stream = Subject()
 
+
 def create_circuit(price_stream, move_stream, sch):
     s_price_prev = []
     s_price = []
@@ -28,7 +29,8 @@ def create_circuit(price_stream, move_stream, sch):
         s_move.append(move)
         if (s_price or s_price_prev):
             if not s_price:
-                logger.info('Processing previously ticked prices with new market move')
+                logger.info(
+                    'Processing previously ticked prices with new market move')
             prediction = [p * move for p in (s_price or s_price_prev)]
             prediction_stream.on_next(prediction)
             s_price.clear()
@@ -38,10 +40,12 @@ def create_circuit(price_stream, move_stream, sch):
     price_stream.subscribe(on_price, scheduler=sch)
     move_stream.subscribe(on_move, scheduler=sch)
 
+
 def downstream(prediction_stream, sch):
     def on_predict(predicts):
         logger.info('Predicts: {}'.format(predicts))
     prediction_stream.subscribe(on_predict, scheduler=sch)
+
 
 async def watch_directory(dirPath, stream, parse_fn, poll_interval=0.1):
     """Polls a directory and pushes new events into the given stream."""
@@ -53,18 +57,20 @@ async def watch_directory(dirPath, stream, parse_fn, poll_interval=0.1):
         os.mkdir(os.path.join(dirPath, 'error'))
 
     def readfiles():
-        fileNames = [path for path in os.listdir(dirPath) if path.endswith('.txt')]
+        fileNames = [path for path in os.listdir(
+            dirPath) if path.endswith('.txt')]
         if fileNames:
-            logger.info('Processing {} {}...'.format(len(fileNames), dirPath.split('/')[-1]))
-        
+            logger.info('Processing {} {}...'.format(
+                len(fileNames), dirPath.split('/')[-1]))
+
         for fileName in fileNames:
             filePath = os.path.join(dirPath, fileName)
-            try:                
+            try:
                 with open(filePath, "r") as f:
                     data = f.read().strip()
                     if data:
                         event = parse_fn(data)
-                        stream.on_next(event)            
+                        stream.on_next(event)
                 shutil.move(filePath, os.path.join(dirPath, 'done', fileName))
             except Exception as ex:
                 logger.exception(ex)
@@ -85,13 +91,15 @@ async def main():
     create_circuit(price_stream, market_move_stream, scheduler)
     downstream(prediction_stream, scheduler)
 
-    dirPath = lambda name: os.path.join('C:/Users/suraj/projects/async_risk/rxpy/',name)
+    def dirPath(name): return os.path.join(
+        'C:/Users/suraj/projects/async_risk/rxpy/', name)
 
     price_task = asyncio.create_task(
         watch_directory(dirPath('prices'), price_stream, lambda s: float(s))
     )
     move_task = asyncio.create_task(
-        watch_directory(dirPath('market_moves'), market_move_stream, lambda s: float(s))
+        watch_directory(dirPath('market_moves'),
+                        market_move_stream, lambda s: float(s))
     )
 
     await asyncio.gather(price_task, move_task)
