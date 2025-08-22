@@ -1,7 +1,7 @@
 import os
 import shutil
 import asyncio
-from lib.logging import logger
+from logging_utils import logger
 from rx.subject import Subject
 from rx.scheduler.eventloop import AsyncIOScheduler
 
