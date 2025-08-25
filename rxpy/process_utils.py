@@ -2,11 +2,17 @@ import multiprocessing as mp
 import cloudpickle
 from rx.subject import Subject
 from logging_utils import logger
+from enum import StrEnum
+
+
+class Location(StrEnum):
+    SUBPROC = "subprocess"
+    MAIN = "main"
 
 
 class SubprocessManager:
     def __init__(self, name=''):
-        self.name = name + str(id(self))
+        self.name = f'{name}:{str(id(self))}' if name else str(id(self))
         self.procs = []
         self.queues = []
 
@@ -14,13 +20,14 @@ class SubprocessManager:
         return self.name
 
     def get_worker(self):
-        logger.info('creating worker')
+        logger.info(f'[{self.__class__.__name__}] creating subprocess')
         in_q, out_q = mp.Queue(), mp.Queue()
         p = mp.Process(target=self.worker_loop, args=(in_q, out_q))
         p.start()
         self.procs.append(p)
         self.queues.append((in_q, out_q))
-        logger.info(f'process: {p.pid} and queues: {[in_q, out_q]} created')
+        logger.info(
+            f'[{self.__class__.__name__}] subprocess: {p.pid} and queues: {[in_q, out_q]} created')
         return in_q, out_q
 
     @staticmethod
@@ -32,7 +39,6 @@ class SubprocessManager:
             func_bytes, data = msg
             func = cloudpickle.loads(func_bytes)
             try:
-                logger.info('running worker loop')
                 result = func(data)
                 out_q.put(result)
             except Exception as e:
@@ -42,10 +48,12 @@ class SubprocessManager:
         for in_q, _ in self.queues:
             in_q.put(None)
         for p in self.procs:
+            logger.info(
+                f'[{self.__class__.__name__}] Closing process: {p.pid}')
             p.join()
 
 
-class execute:
+class Execute:
 
     _managers = []
 
@@ -53,8 +61,8 @@ class execute:
         self.manager = None
         self._isSubProc = False
 
-    def execute(self, location, func, input, scheduler=None):
-        if location == "main":
+    def execute(self, location: Location, func, input: Subject, scheduler=None):
+        if location == Location.MAIN:
             # Run locally, just like normal Rx
             out_stream = Subject()
 
@@ -65,9 +73,9 @@ class execute:
             input.subscribe(wrapper, scheduler=scheduler)
             return out_stream
 
-        elif location == "subprocess":
+        elif location == Location.SUBPROC:
             # Run remotely
-            self.manager = SubprocessManager()
+            self.manager = SubprocessManager(func.__name__)
             self._managers.append(self.manager)
             in_q, out_q = self.manager.get_worker()
             func_bytes = cloudpickle.dumps(func)
@@ -84,11 +92,15 @@ class execute:
             input.subscribe(forwarder, scheduler=scheduler)
             return out_stream
 
-    def __call__(self, location, func, input, scheduler=None):
-        return self.execute(location, func, input, scheduler=scheduler)
+    @classmethod
+    def run(cls, location, func, input, scheduler=None):
+        return cls().execute(location, func, input, scheduler=scheduler)
 
     @classmethod
     def shutdown(cls):
         for manager in cls._managers:
             logger.info(f'Shutting down manager: {manager}')
             manager.shutdown()
+
+
+execute = Execute.run
