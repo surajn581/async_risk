@@ -4,14 +4,11 @@ import asyncio
 from logging_utils import logger
 from rx.subject import Subject
 from rx.scheduler.eventloop import AsyncIOScheduler
-from process_utils import execute
-
-price_stream = Subject()
-market_move_stream = Subject()
-prediction_stream = Subject()
+from process_utils import execute, Location, Execute
+from event_listner import DirectoryListner
 
 
-def create_circuit(price_stream, move_stream, sch):
+def create_circuit(price_stream, move_stream, prediction_stream):
     s_price_prev = []
     s_price = []
     s_move = []
@@ -38,8 +35,8 @@ def create_circuit(price_stream, move_stream, sch):
         else:
             logger.info('No new prices to process')
 
-    price_stream.subscribe(on_price, scheduler=sch)
-    move_stream.subscribe(on_move, scheduler=sch)
+    price_stream.subscribe(on_price)
+    move_stream.subscribe(on_move)
 
 
 def post_process(predicts):
@@ -48,66 +45,47 @@ def post_process(predicts):
     return [p*2 for p in predicts]
 
 
-async def watch_directory(dirPath, stream, parse_fn, poll_interval=0.1):
-    """Polls a directory and pushes new events into the given stream."""
+def downstream_process(predicts):
+    logger.info('[Downstream] received: {}'.format(predicts))
 
-    if not os.path.exists(os.path.join(dirPath, 'done')):
-        os.mkdir(os.path.join(dirPath, 'done'))
 
-    if not os.path.exists(os.path.join(dirPath, 'error')):
-        os.mkdir(os.path.join(dirPath, 'error'))
-
-    def readfiles():
-        fileNames = [path for path in os.listdir(
-            dirPath) if path.endswith('.txt')]
-        if fileNames:
-            logger.info('Processing {} {}...'.format(
-                len(fileNames), dirPath.split('/')[-1]))
-
-        for fileName in fileNames:
-            filePath = os.path.join(dirPath, fileName)
-            try:
-                with open(filePath, "r") as f:
-                    data = f.read().strip()
-                    if data:
-                        event = parse_fn(data)
-                        stream.on_next(event)
-                shutil.move(filePath, os.path.join(dirPath, 'done', fileName))
-            except Exception as ex:
-                logger.exception(ex)
-                shutil.move(filePath, os.path.join(dirPath, 'error', fileName))
-
-    while True:
-        try:
-            readfiles()
-        except FileNotFoundError:
-            pass
-        await asyncio.sleep(poll_interval)
+def stop_circut(trigger):
+    logger.info(f'Stop handler triggered with: {trigger}')
+    Execute.shutdown()
+    raise asyncio.exceptions.CancelledError('Stopping Circuit')
 
 
 async def main():
     loop = asyncio.get_event_loop()
     scheduler = AsyncIOScheduler(loop)
 
-    create_circuit(price_stream, market_move_stream, scheduler)
+    price_stream = Subject()
+    market_move_stream = Subject()
+    prediction_stream = Subject()
+    cancel_trigger = Subject()
 
-    post_process_out = execute()('subprocess', post_process,
-                                 prediction_stream, scheduler)
-    post_process_out.subscribe(lambda out: logger.info(
-        'Downstream received: {}'.format(out)))
+    create_circuit(price_stream, market_move_stream, prediction_stream)
+
+    processed = execute(Location.SUBPROC, post_process,
+                        prediction_stream, scheduler)
+
+    execute(Location.SUBPROC, downstream_process, processed, scheduler)
 
     def dirPath(name): return os.path.join(
         'C:/Users/suraj/projects/async_risk/rxpy/', name)
 
-    price_task = asyncio.create_task(
-        watch_directory(dirPath('prices'), price_stream, lambda s: float(s))
-    )
-    move_task = asyncio.create_task(
-        watch_directory(dirPath('market_moves'),
-                        market_move_stream, lambda s: float(s))
-    )
+    price_task = DirectoryListner.task(
+        dirPath('prices'), price_stream, lambda s: float(s))
 
-    await asyncio.gather(price_task, move_task)
+    move_task = DirectoryListner.task(dirPath('market_moves'),
+                                      market_move_stream, lambda s: float(s))
+
+    cancel_task = DirectoryListner.task(dirPath('cancel_trigger'),
+                                        cancel_trigger, lambda s: s)
+
+    cancel_trigger.subscribe(stop_circut)
+
+    await asyncio.gather(price_task, move_task, cancel_task)
 
 if __name__ == "__main__":
     asyncio.run(main())
