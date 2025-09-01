@@ -4,6 +4,8 @@ import cloudpickle
 from rx.subject import Subject
 from logging_utils import logger
 from enum import StrEnum
+import traceback
+import sys
 
 
 class Location(StrEnum):
@@ -60,6 +62,7 @@ class SubprocessManager:
                 await asyncio.to_thread(conn.send, result)
             except Exception as e:
                 # Send exception back
+                logger.exception(f'Worker Error: {e} {traceback.format_exc()}')
                 await asyncio.to_thread(conn.send, e)
 
         conn.close()
@@ -111,7 +114,8 @@ class Execute:
                 # await result without blocking using to_thread
                 result = await asyncio.to_thread(conn.recv)
                 if isinstance(result, Exception):
-                    logger.info(f"[Subprocess error] {result}")
+                    logger.exception(
+                        f"[Subprocess error] {result}")
                 else:
                     out_stream.on_next(result)
 
