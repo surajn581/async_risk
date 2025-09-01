@@ -8,7 +8,7 @@ from process_utils import execute, Location, Execute
 from event_listner import DirectoryListner
 
 
-def create_circuit(price_stream, move_stream, prediction_stream):
+def calc_predict(price_stream, move_stream, prediction_stream):
     s_price_prev = []
     s_price = []
     s_move = []
@@ -64,7 +64,7 @@ async def main():
     prediction_stream = Subject()
     cancel_trigger = Subject()
 
-    create_circuit(price_stream, market_move_stream, prediction_stream)
+    calc_predict(price_stream, market_move_stream, prediction_stream)
 
     processed = execute(Location.SUBPROC, post_process,
                         prediction_stream, scheduler)
