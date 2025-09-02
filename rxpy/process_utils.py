@@ -3,7 +3,7 @@ import multiprocessing as mp
 import cloudpickle
 from rx.subject import Subject
 from logging_utils import logger
-from enum import StrEnum
+from enum import StrEnum, Enum
 import traceback
 import sys
 
@@ -11,6 +11,11 @@ import sys
 class Location(StrEnum):
     SUBPROC = "subprocess"
     MAIN = "main"
+
+
+class Phase(Enum):
+    INIT = 1
+    TICK = 2
 
 
 class SubprocessManager:
@@ -40,6 +45,10 @@ class SubprocessManager:
 
     @staticmethod
     async def worker_async_loop(conn):
+        func = None
+        in_stream = Subject()
+        out_stream = None
+
         while True:
             try:
                 # recv is blocking, run in thread
@@ -50,20 +59,19 @@ class SubprocessManager:
             if msg is None:
                 break
 
-            func_bytes, data = msg
-            try:
-                func = cloudpickle.loads(func_bytes)
-                if asyncio.iscoroutinefunction(func):
-                    result = await func(data)
-                else:
-                    # run sync func in executor to avoid blocking
-                    loop = asyncio.get_running_loop()
-                    result = await loop.run_in_executor(None, func, data)
-                await asyncio.to_thread(conn.send, result)
-            except Exception as e:
-                # Send exception back
-                logger.exception(f'Worker Error: {e} {traceback.format_exc()}')
-                await asyncio.to_thread(conn.send, e)
+            phase, payload = msg
+
+            if phase == Phase.INIT:
+                func = cloudpickle.loads(payload)
+                out_stream = func(in_stream)
+
+                # Forward outputs back to parent
+                def forward(x):
+                    conn.send(x)
+                out_stream.subscribe(forward)
+
+            elif phase == Phase.TICK:
+                in_stream.on_next(payload)
 
         conn.close()
 
@@ -82,49 +90,47 @@ class SubprocessManager:
 
 
 class Execute:
-
     _managers = []
 
     def __init__(self):
         self.manager = None
-        self._isSubProc = False
 
     def execute(self, location: Location, func, input: Subject, scheduler=None):
+
         if location == Location.MAIN:
-            # Run locally, just like normal Rx
-            out_stream = Subject()
+            return func(input)
 
-            def wrapper(x):
-                result = func(x)
-                if result is not None:
-                    out_stream.on_next(result)
-            input.subscribe(wrapper, scheduler=scheduler)
-            return out_stream
-
-        elif location == Location.SUBPROC:
-            # Run remotely with async Pipe
+        if location == Location.SUBPROC:
+            # Subprocess execution
             self.manager = SubprocessManager(func.__name__)
             self._managers.append(self.manager)
             conn = self.manager.get_worker()
-            func_bytes = cloudpickle.dumps(func)
+
+            # Create local in/out streams
             out_stream = Subject()
 
-            async def forwarder_async(x):
-                conn.send((func_bytes, x))
-                # await result without blocking using to_thread
-                result = await asyncio.to_thread(conn.recv)
-                if isinstance(result, Exception):
-                    logger.exception(
-                        f"[Subprocess error] {result}")
-                else:
-                    out_stream.on_next(result)
+            # Send function definition once
+            func_bytes = cloudpickle.dumps(func)
+            conn.send((Phase.INIT, func_bytes))
 
-            # Wrap the async forwarder in a sync function for Rx subscription
-            def forwarder(x):
-                asyncio.create_task(forwarder_async(x))
+            # Forward inputs to subprocess
+            def on_input(x):
+                conn.send((Phase.TICK, x))
+            input.subscribe(on_input, scheduler=scheduler)
 
-            input.subscribe(forwarder, scheduler=scheduler)
+            # Listen for outputs
+            async def reader():
+                while True:
+                    msg = await asyncio.to_thread(conn.recv)
+                    if msg is None:
+                        break
+                    out_stream.on_next(msg)
+
+            asyncio.create_task(reader())
             return out_stream
+
+        else:
+            raise ValueError(f'Unknown value for location: {location}')
 
     @classmethod
     def run(cls, location, func, input, scheduler=None):
