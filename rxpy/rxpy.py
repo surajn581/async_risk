@@ -1,75 +1,99 @@
-import os
-import shutil
 import asyncio
-from logging_utils import logger
+from rx import create
+from rx import operators as ops
 from rx.subject import Subject
 from rx.scheduler.eventloop import AsyncIOScheduler
-from process_utils import execute, Location, Execute
-from event_listner import DirectoryListner
+from logging_utils import logger
+from event_listner import DirectoryListner, os
+from process_utils import execute, Execute, Location
 
 
-def calc_predict(price_stream, move_stream, prediction_stream):
-    s_price_prev = []
-    s_price = []
-    s_move = []
+def calc_predict(price_stream: Subject, move_stream: Subject) -> Subject:
+    """Predicts based on prices and market moves"""
+    output_stream = Subject()
+    s_price, s_price_prev, s_move = [], [], []
 
     def on_price(price):
-        logger.info("Price ticked: {}".format(price))
+        logger.info(f"[calc_predict] Price ticked: {price}")
         s_price.append(price)
         s_price_prev.append(price)
         if s_move:
-            logger.info('Re-ticking market move {}'.format(s_move[-1]))
+            logger.info(f"[calc_predict] Re-ticking market move {s_move[-1]}")
             move_stream.on_next(s_move[-1])
             s_move.clear()
 
     def on_move(move):
-        logger.info("Market move ticked: {}".format(move))
+        logger.info(f"[calc_predict] Market move ticked: {move}")
         s_move.append(move)
         if (s_price or s_price_prev):
             if not s_price:
                 logger.info(
-                    'Processing previously ticked prices with new market move')
+                    "[calc_predict] Processing previous prices with new market move")
             prediction = [p * move for p in (s_price or s_price_prev)]
-            prediction_stream.on_next(prediction)
+            output_stream.on_next(prediction)
             s_price.clear()
         else:
-            logger.info('No new prices to process')
+            logger.info("[calc_predict] No new prices to process")
 
     price_stream.subscribe(on_price)
     move_stream.subscribe(on_move)
+    return output_stream
 
 
-def post_process(predicts):
-    logger.info('[post_process] received predicts: {}'.format(predicts))
-    logger.info('[post_process] scaling by 2')
-    return [p*2 for p in predicts]
+def post_process(input_stream: Subject) -> Subject:
+    """Scales predictions by 2"""
+    output_stream = Subject()
+
+    def on_input(inputs: list[float]):
+        logger.info(f"[post_process] received inputs: {inputs}")
+        scaled = [p * 2 for p in inputs]
+        logger.info("[post_process] scaling by 2")
+        output_stream.on_next(scaled)
+
+    input_stream.subscribe(on_input)
+    return output_stream
 
 
-def downstream_process(predicts):
-    logger.info('[Downstream] received: {}'.format(predicts))
+def downstream_process(input_stream: Subject) -> Subject:
+    """Final downstream handler"""
+    output_stream = Subject()
+
+    def on_input(inputs: list[float]):
+        logger.info(f"[downstream_process] received: {inputs}")
+        output_stream.on_next("Success")
+
+    input_stream.subscribe(on_input)
+    return output_stream
 
 
-def stop_circut(trigger):
-    logger.info(f'Stop handler triggered with: {trigger}')
-    Execute.shutdown()
-    raise asyncio.exceptions.CancelledError('Stopping Circuit')
+def stop_circuit(trigger: bool):
+    logger.info(f"[stop_circuit] Stop handler triggered with: {trigger}")
+    raise asyncio.CancelledError("Stopping Circuit")
+
+
+def main_circuit(price_stream: Subject, market_move_stream: Subject) -> Subject:
+    calc_predict_out = calc_predict(price_stream, market_move_stream)
+    post_process_out = execute(
+        Location.SUBPROC,
+        post_process,
+        calc_predict_out)
+    downstream_out = downstream_process(post_process_out)
+
+    # Subscribe to final output
+    def on_status(status):
+        logger.info(f"[main_circuit] downstream sent status: {status}")
+
+    downstream_out.subscribe(on_status)
+    return downstream_out
 
 
 async def main():
-    loop = asyncio.get_event_loop()
-    scheduler = AsyncIOScheduler(loop)
-
     price_stream = Subject()
     market_move_stream = Subject()
-    prediction_stream = Subject()
     cancel_trigger = Subject()
 
-    calc_predict(price_stream, market_move_stream, prediction_stream)
-
-    processed = execute(Location.SUBPROC, post_process,
-                        prediction_stream, scheduler)
-
-    execute(Location.SUBPROC, downstream_process, processed, scheduler)
+    main_circuit(price_stream, market_move_stream)
+    cancel_trigger.subscribe(stop_circuit)
 
     def dirPath(name): return os.path.join(
         'C:/Users/suraj/projects/async_risk/rxpy/', name)
@@ -83,9 +107,8 @@ async def main():
     cancel_task = DirectoryListner.task(dirPath('cancel_trigger'),
                                         cancel_trigger, lambda s: s)
 
-    cancel_trigger.subscribe(stop_circut)
-
     await asyncio.gather(price_task, move_task, cancel_task)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
