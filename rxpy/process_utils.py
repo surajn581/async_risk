@@ -10,7 +10,6 @@ import sys
 
 class Location(StrEnum):
     SUBPROC = "subprocess"
-    MAIN = "main"
 
 
 class Phase(Enum):
@@ -96,9 +95,6 @@ class Execute:
         self.manager = None
 
     def execute(self, location: Location, func, input: Subject, scheduler=None):
-
-        if location == Location.MAIN:
-            return func(input)
 
         if location == Location.SUBPROC:
             # Subprocess execution
