@@ -68,6 +68,7 @@ def downstream_process(input_stream: Subject) -> Subject:
 
 def stop_circuit(trigger: bool):
     logger.info(f"[stop_circuit] Stop handler triggered with: {trigger}")
+    Execute.shutdown()
     raise asyncio.CancelledError("Stopping Circuit")
 
 
