@@ -6,6 +6,7 @@ from logging_utils import logger
 from enum import StrEnum, Enum
 import traceback
 import sys
+from functools import partial
 
 
 class Location(StrEnum):
@@ -15,6 +16,9 @@ class Location(StrEnum):
 class Phase(Enum):
     INIT = 1
     TICK = 2
+
+
+DEBUG = False
 
 
 class SubprocessManager:
@@ -45,15 +49,15 @@ class SubprocessManager:
     @staticmethod
     async def worker_async_loop(conn):
         func = None
-        in_stream = Subject()
         out_stream = None
+        input_streams = {}
 
         while True:
             try:
                 # recv is blocking, run in thread
                 msg = await asyncio.to_thread(conn.recv)
-            except EOFError:
-                break
+            except EOFError as eof:
+                logger.exception(f'[worker_async_loop] {eof}')
 
             if msg is None:
                 break
@@ -62,7 +66,11 @@ class SubprocessManager:
 
             if phase == Phase.INIT:
                 func = cloudpickle.loads(payload)
-                out_stream = func(in_stream)
+                # Forward inputs to subprocess
+                input_streams = {
+                    key: Subject() for key, _ in func.__annotations__.items()
+                    if key != 'return'}
+                out_stream = func(**input_streams)
 
                 # Forward outputs back to parent
                 def forward(x):
@@ -70,7 +78,8 @@ class SubprocessManager:
                 out_stream.subscribe(forward)
 
             elif phase == Phase.TICK:
-                in_stream.on_next(payload)
+                stream_name, tick_value = payload
+                input_streams[stream_name].on_next(tick_value)
 
         conn.close()
 
@@ -94,7 +103,7 @@ class Execute:
     def __init__(self):
         self.manager = None
 
-    def execute(self, location: Location, func, input: Subject, scheduler=None):
+    def execute(self, location: Location, func, input_streams: dict[str:Subject], scheduler=None):
 
         if location == Location.SUBPROC:
             # Subprocess execution
@@ -109,10 +118,13 @@ class Execute:
             func_bytes = cloudpickle.dumps(func)
             conn.send((Phase.INIT, func_bytes))
 
+            def on_input(stream_name, x):
+                conn.send((Phase.TICK, (stream_name, x)))
+
             # Forward inputs to subprocess
-            def on_input(x):
-                conn.send((Phase.TICK, x))
-            input.subscribe(on_input, scheduler=scheduler)
+            for stream_name, stream in input_streams.items():
+                stream.subscribe(
+                    partial(on_input, stream_name), scheduler=scheduler)
 
             # Listen for outputs
             async def reader():
@@ -129,8 +141,8 @@ class Execute:
             raise ValueError(f'Unknown value for location: {location}')
 
     @classmethod
-    def run(cls, location, func, input, scheduler=None):
-        return cls().execute(location, func, input, scheduler=scheduler)
+    def run(cls, location, func, scheduler=None, **inputs):
+        return cls().execute(location, func, inputs, scheduler=scheduler)
 
     @classmethod
     def shutdown(cls):

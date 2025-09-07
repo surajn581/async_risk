@@ -72,12 +72,18 @@ def stop_circuit(trigger: bool):
 
 
 def main_circuit(price_stream: Subject, market_move_stream: Subject) -> Subject:
-    calc_predict_out = calc_predict(price_stream, market_move_stream)
+    calc_predict_out = execute(Location.SUBPROC,
+                               calc_predict,
+                               price_stream=price_stream,
+                               move_stream=market_move_stream)
     post_process_out = execute(
         Location.SUBPROC,
         post_process,
-        calc_predict_out)
-    downstream_out = downstream_process(post_process_out)
+        input_stream=calc_predict_out)
+    downstream_out = execute(
+        Location.SUBPROC,
+        downstream_process,
+        input_stream=post_process_out)
 
     # Subscribe to final output
     def on_status(status):
