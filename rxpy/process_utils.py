@@ -70,7 +70,14 @@ class SubprocessManager:
                 input_streams = {
                     key: Subject() for key, _ in func.__annotations__.items()
                     if key != 'return'}
-                out_stream = func(**input_streams)
+                
+                if asyncio.iscoroutinefunction(func):
+                    logger.info(f'running func: {func} as coroutine')
+                    out_stream = await func(**input_streams)
+                else:
+                    loop = asyncio.get_running_loop()
+                    logger.info(f'running func: {func} in executor')
+                    out_stream = await loop.run_in_executor(None, func, **input_streams)
 
                 # Forward outputs back to parent
                 def forward(x):
