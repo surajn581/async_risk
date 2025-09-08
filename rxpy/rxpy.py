@@ -1,14 +1,11 @@
 import asyncio
-from rx import create
-from rx import operators as ops
 from rx.subject import Subject
-from rx.scheduler.eventloop import AsyncIOScheduler
 from logging_utils import logger
 from event_listner import DirectoryListner, os
 from process_utils import execute, Execute, Location
 
 
-def calc_predict(price_stream: Subject, move_stream: Subject) -> Subject:
+async def calc_predict(price_stream: Subject, move_stream: Subject) -> Subject:
     """Predicts based on prices and market moves"""
     output_stream = Subject()
     s_price, s_price_prev, s_move = [], [], []
@@ -40,21 +37,22 @@ def calc_predict(price_stream: Subject, move_stream: Subject) -> Subject:
     return output_stream
 
 
-def post_process(input_stream: Subject) -> Subject:
+async def post_process(input_stream: Subject) -> Subject:
     """Scales predictions by 2"""
     output_stream = Subject()
 
-    def on_input(inputs: list[float]):
+    async def on_input(inputs: list[float]):
         logger.info(f"[post_process] received inputs: {inputs}")
         scaled = [p * 2 for p in inputs]
+        await asyncio.sleep(2)    # mimic post process time
         logger.info("[post_process] scaling by 2")
         output_stream.on_next(scaled)
 
-    input_stream.subscribe(on_input)
+    input_stream.subscribe(lambda x: asyncio.create_task(on_input(x)))
     return output_stream
 
 
-def downstream_process(input_stream: Subject) -> Subject:
+async def downstream_process(input_stream: Subject) -> Subject:
     """Final downstream handler"""
     output_stream = Subject()
 
@@ -66,13 +64,13 @@ def downstream_process(input_stream: Subject) -> Subject:
     return output_stream
 
 
-def stop_circuit(trigger: bool):
+async def stop_circuit(trigger: bool):
     logger.info(f"[stop_circuit] Stop handler triggered with: {trigger}")
     Execute.shutdown()
     raise asyncio.CancelledError("Stopping Circuit")
 
 
-def main_circuit(price_stream: Subject, market_move_stream: Subject) -> Subject:
+async def main_circuit(price_stream: Subject, market_move_stream: Subject) -> Subject:
     calc_predict_out = execute(Location.SUBPROC,
                                calc_predict,
                                price_stream=price_stream,
@@ -99,7 +97,7 @@ async def main():
     market_move_stream = Subject()
     cancel_trigger = Subject()
 
-    main_circuit(price_stream, market_move_stream)
+    await main_circuit(price_stream, market_move_stream)
     cancel_trigger.subscribe(stop_circuit)
 
     def dirPath(name): return os.path.join(
